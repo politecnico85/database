@@ -1,0 +1,446 @@
+-- =========================
+-- Extensiones
+-- =========================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- =========================
+-- Catálogos y entidades
+-- =========================
+CREATE TABLE currency (
+    currency_code char(3) PRIMARY KEY,      -- ISO 4217 (e.g., 'USD', 'EUR')
+    name text NOT NULL,
+    symbol text NOT NULL,                  -- e.g., '$', '€'
+    decimal_places smallint NOT NULL DEFAULT 2,
+    is_active boolean NOT NULL DEFAULT true,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone
+);
+
+CREATE TABLE accounting_entity (
+    entity_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name text NOT NULL,
+    base_currency char(3) NOT NULL REFERENCES currency(currency_code),
+    razon_social text,
+    ruc text,
+    representante_legal text,
+    parent_entity_id uuid REFERENCES accounting_entity(entity_id),
+    timezone text NOT NULL DEFAULT 'UTC',
+    is_consolidated boolean NOT NULL DEFAULT false,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+CREATE TABLE fiscal_period (
+    period_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    period_code text NOT NULL,            -- e.g., '2025-08'
+    fiscal_year int GENERATED ALWAYS AS (CAST(SUBSTRING(period_code FROM '^\d{4}') AS int)) STORED,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    is_closed boolean NOT NULL DEFAULT false,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE (entity_id, period_code),
+    CHECK (start_date <= end_date),
+    EXCLUDE USING GIST (entity_id WITH =, tsrange(start_date, end_date) WITH &&)
+);
+
+-- =========================
+-- Plan de cuentas
+-- =========================
+CREATE TYPE account_category AS ENUM (
+    'ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE',
+    'CONTRA_ASSET', 'CONTRA_LIABILITY', 'CONTRA_EQUITY', 'CONTRA_REVENUE', 'CONTRA_EXPENSE',
+    'OTHER_ASSET', 'OTHER_LIABILITY'
+);
+
+CREATE TYPE normal_balance AS ENUM ('DEBIT', 'CREDIT');
+
+CREATE TABLE account (
+    account_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    account_code text NOT NULL,            -- e.g., '1000', '1100.01'
+    account_name text NOT NULL,
+    description text,
+    category account_category NOT NULL,
+    normal_side normal_balance NOT NULL,
+    parent_account_id uuid REFERENCES account(account_id),
+    is_postable boolean NOT NULL DEFAULT true,
+    is_active boolean NOT NULL DEFAULT true,
+    currency_code char(3) NOT NULL REFERENCES currency(currency_code),
+    level int NOT NULL DEFAULT 1,          -- Nivel en jerarquía
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, account_code),
+    CHECK (account_id <> parent_account_id),
+    CHECK (account_code ~ '^\d+(\.\d+)*$')
+);
+
+-- =========================
+-- Dimensiones analíticas
+-- =========================
+CREATE TABLE cost_center (
+    cost_center_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,
+    name text NOT NULL,
+    description text,
+    parent_id uuid REFERENCES cost_center(cost_center_id),
+    budget_amount numeric,
+    budget_currency char(3) REFERENCES currency(currency_code),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, code)
+);
+
+CREATE TABLE project (
+    project_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,
+    name text NOT NULL,
+    description text,
+    parent_id uuid REFERENCES project(project_id),
+    budget_amount numeric,
+    budget_currency char(3) REFERENCES currency(currency_code),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, code)
+);
+
+-- =========================
+-- Tablas de soporte para negocios
+-- =========================
+CREATE TABLE exchange_rate (
+    rate_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    from_currency char(3) NOT NULL REFERENCES currency(currency_code),
+    to_currency char(3) NOT NULL REFERENCES currency(currency_code),
+    rate_date date NOT NULL,
+    rate numeric(15,6) NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    UNIQUE(from_currency, to_currency, rate_date)
+);
+
+CREATE TABLE tax_code (
+    tax_code_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,
+    name text NOT NULL,
+    rate numeric(5,2) NOT NULL,
+    account_id uuid REFERENCES account(account_id),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, code)
+);
+
+CREATE TABLE partner (
+    partner_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    name text NOT NULL,
+    type text CHECK (type IN ('CUSTOMER', 'VENDOR', 'EMPLOYEE')),
+    tax_id text,
+    address text,
+    currency_code char(3) REFERENCES currency(currency_code),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+CREATE TABLE product (
+    product_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,
+    name text NOT NULL,
+    type text CHECK (type IN ('GOOD', 'SERVICE')),
+    unit_price numeric,
+    cost_account_id uuid REFERENCES account(account_id),
+    revenue_account_id uuid REFERENCES account(account_id),
+    inventory_account_id uuid REFERENCES account(account_id),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, code)
+);
+
+CREATE TABLE inventory (
+    inventory_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id uuid NOT NULL REFERENCES product(product_id),
+    quantity numeric NOT NULL,
+    as_of_date date NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+-- =========================
+-- Transacciones
+-- =========================
+CREATE TABLE journal_entry (
+    entry_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    period_id uuid NOT NULL REFERENCES fiscal_period(period_id),
+    entry_date date NOT NULL,
+    description text,
+    is_posted boolean NOT NULL DEFAULT false,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+CREATE TABLE ledger_line (
+    line_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entry_id uuid NOT NULL REFERENCES journal_entry(entry_id),
+    account_id uuid NOT NULL REFERENCES account(account_id),
+    debit numeric NOT NULL DEFAULT 0,
+    credit numeric NOT NULL DEFAULT 0,
+    currency_code char(3) NOT NULL REFERENCES currency(currency_code),
+    amount_foreign numeric,
+    cost_center_id uuid REFERENCES cost_center(cost_center_id),
+    project_id uuid REFERENCES project(project_id),
+    partner_id uuid REFERENCES partner(partner_id),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    CHECK (debit >= 0 AND credit >= 0 AND (debit + credit > 0))
+);
+
+-- =========================
+-- Plantillas de asientos
+-- =========================
+CREATE TABLE journal_template (
+    template_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id uuid NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,
+    name text NOT NULL,
+    description text,
+    is_active boolean NOT NULL DEFAULT true,
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    UNIQUE(entity_id, code)
+);
+
+CREATE TABLE journal_template_line (
+    line_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    template_id uuid NOT NULL REFERENCES journal_template(template_id),
+    account_id uuid REFERENCES account(account_id),
+    account_category account_category,
+    normal_side normal_balance NOT NULL,
+    amount_expression text NOT NULL,
+    currency_code char(3) REFERENCES currency(currency_code),
+    cost_center_id uuid REFERENCES cost_center(cost_center_id),
+    project_id uuid REFERENCES project(project_id),
+    partner_type text CHECK (partner_type IN ('CUSTOMER', 'VENDOR', 'EMPLOYEE')),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone,
+    CHECK (account_id IS NOT NULL OR account_category IS NOT NULL),
+    CHECK (amount_expression <> '')
+);
+
+-- =========================
+-- Triggers
+-- =========================
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = current_timestamp;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_currency_timestamp
+    BEFORE UPDATE ON currency
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_accounting_entity_timestamp
+    BEFORE UPDATE ON accounting_entity
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_fiscal_period_timestamp
+    BEFORE UPDATE ON fiscal_period
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_account_timestamp
+    BEFORE UPDATE ON account
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_cost_center_timestamp
+    BEFORE UPDATE ON cost_center
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_project_timestamp
+    BEFORE UPDATE ON project
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_exchange_rate_timestamp
+    BEFORE UPDATE ON exchange_rate
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_tax_code_timestamp
+    BEFORE UPDATE ON tax_code
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_partner_timestamp
+    BEFORE UPDATE ON partner
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_product_timestamp
+    BEFORE UPDATE ON product
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_inventory_timestamp
+    BEFORE UPDATE ON inventory
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_journal_entry_timestamp
+    BEFORE UPDATE ON journal_entry
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_journal_template_timestamp
+    BEFORE UPDATE ON journal_template
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_journal_template_line_timestamp
+    BEFORE UPDATE ON journal_template_line
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+-- Trigger para validar periodo cerrado
+CREATE OR REPLACE FUNCTION prevent_closed_period_update()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.is_closed THEN
+        RAISE EXCEPTION 'No se puede modificar el periodo % porque está cerrado', OLD.period_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER fiscal_period_closed_check
+    BEFORE UPDATE OR INSERT ON journal_entry
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_closed_period_update();
+
+-- =========================
+-- Índices
+-- =========================
+CREATE INDEX idx_account_entity_code ON account(entity_id, account_code);
+CREATE INDEX idx_period_entity_date ON fiscal_period(entity_id, start_date);
+CREATE INDEX idx_ledger_entry_id ON ledger_line(entry_id);
+CREATE INDEX idx_account_parent_id ON account(parent_account_id);
+CREATE INDEX idx_cost_center_parent_id ON cost_center(parent_id);
+CREATE INDEX idx_project_parent_id ON project(parent_id);
+
+-- =========================
+-- Función para generar asientos desde plantillas
+-- =========================
+CREATE OR REPLACE FUNCTION generate_journal_entry(
+    p_template_code text,
+    p_entity_id uuid,
+    p_period_id uuid,
+    p_amount numeric,
+    p_tax_rate numeric,
+    p_partner_id uuid,
+    p_currency_code char(3),
+    p_cost_center_id uuid,
+    p_project_id uuid
+)
+RETURNS uuid AS $$
+DECLARE
+    v_entry_id uuid;
+    v_template_id uuid;
+BEGIN
+    -- Obtener template_id
+    SELECT template_id INTO v_template_id
+    FROM journal_template
+    WHERE entity_id = p_entity_id AND code = p_template_code AND is_active = true;
+
+    IF v_template_id IS NULL THEN
+        RAISE EXCEPTION 'Plantilla % no encontrada para entidad %', p_template_code, p_entity_id;
+    END IF;
+
+    -- Verificar periodo abierto
+    IF (SELECT is_closed FROM fiscal_period WHERE period_id = p_period_id) THEN
+        RAISE EXCEPTION 'Periodo % está cerrado', p_period_id;
+    END IF;
+
+    -- Crear journal_entry
+    INSERT INTO journal_entry (entity_id, period_id, entry_date, description, is_posted)
+    VALUES (p_entity_id, p_period_id, current_date, 'Asiento desde plantilla ' || p_template_code, false)
+    RETURNING entry_id INTO v_entry_id;
+
+    -- Generar líneas
+    INSERT INTO ledger_line (
+        entry_id, account_id, debit, credit, currency_code, cost_center_id, project_id, partner_id
+    )
+    SELECT
+        v_entry_id,
+        COALESCE(tl.account_id, (SELECT account_id FROM account WHERE entity_id = p_entity_id AND category = tl.account_category LIMIT 1)),
+        CASE WHEN tl.normal_side = 'DEBIT' THEN
+            CASE tl.amount_expression
+                WHEN 'amount' THEN p_amount
+                WHEN 'amount * tax_rate' THEN p_amount * p_tax_rate
+                WHEN 'amount * (1 + tax_rate)' THEN p_amount * (1 + p_tax_rate)
+                ELSE 0
+            END
+        ELSE 0 END,
+        CASE WHEN tl.normal_side = 'CREDIT' THEN
+            CASE tl.amount_expression
+                WHEN 'amount' THEN p_amount
+                WHEN 'amount * tax_rate' THEN p_amount * p_tax_rate
+                WHEN 'amount * (1 + tax_rate)' THEN p_amount * (1 + p_tax_rate)
+                ELSE 0
+            END
+        ELSE 0 END,
+        COALESCE(tl.currency_code, p_currency_code),
+        COALESCE(tl.cost_center_id, p_cost_center_id),
+        COALESCE(tl.project_id, p_project_id),
+        CASE WHEN tl.partner_type IS NOT NULL THEN p_partner_id ELSE NULL END
+    FROM journal_template_line tl
+    WHERE tl.template_id = v_template_id;
+
+    -- Verificar balance
+    IF (SELECT ABS(SUM(debit) - SUM(credit)) FROM ledger_line WHERE entry_id = v_entry_id) > 0.01 THEN
+        RAISE EXCEPTION 'Asiento no balanceado para entry_id %', v_entry_id;
+    END IF;
+
+    RETURN v_entry_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =========================
+-- Ejemplos de plantillas
+-- =========================
+-- Plantilla para Venta de Servicios
+INSERT INTO journal_template (entity_id, code, name, description)
+VALUES ('00000000-0000-0000-0000-000000000001', 'SALE-SERV', 'Venta de Servicios', 'Plantilla para registrar ventas de servicios con IVA');
+
+INSERT INTO journal_template_line (template_id, account_category, normal_side, amount_expression, currency_code, partner_type)
+VALUES 
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-SERV'), 'ASSET', 'DEBIT', 'amount * (1 + tax_rate)', 'USD', 'CUSTOMER'),
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-SERV'), 'REVENUE', 'CREDIT', 'amount', 'USD', 'CUSTOMER'),
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-SERV'), 'LIABILITY', 'CREDIT', 'amount * tax_rate', 'USD', NULL);
+
+-- Plantilla para Compra de Bienes
+INSERT INTO journal_template (entity_id, code, name, description)
+VALUES ('00000000-0000-0000-0000-000000000001', 'PURCH-GOODS', 'Compra de Bienes', 'Plantilla para registrar compras de bienes con IVA a crédito');
+
+INSERT INTO journal_template_line (template_id, account_category, normal_side, amount_expression, currency_code, partner_type)
+VALUES 
+    ((SELECT template_id FROM journal_template WHERE code = 'PURCH-GOODS'), 'ASSET', 'DEBIT', 'amount', 'USD', NULL),
+    ((SELECT template_id FROM journal_template WHERE code = 'PURCH-GOODS'), 'ASSET', 'DEBIT', 'amount * tax_rate', 'USD', NULL),
+    ((SELECT template_id FROM journal_template WHERE code = 'PURCH-GOODS'), 'LIABILITY', 'CREDIT', 'amount * (1 + tax_rate)', 'USD', 'VENDOR');
+
+-- Plantilla para Devolución de Venta
+INSERT INTO journal_template (entity_id, code, name, description)
+VALUES ('00000000-0000-0000-0000-000000000001', 'SALE-RETURN', 'Devolución de Venta', 'Plantilla para registrar devoluciones de ventas de servicios con IVA');
+
+INSERT INTO journal_template_line (template_id, account_category, normal_side, amount_expression, currency_code, partner_type)
+VALUES 
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-RETURN'), 'REVENUE', 'DEBIT', 'amount', 'USD', 'CUSTOMER'),
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-RETURN'), 'LIABILITY', 'DEBIT', 'amount * tax_rate', 'USD', NULL),
+    ((SELECT template_id FROM journal_template WHERE code = 'SALE-RETURN'), 'ASSET', 'CREDIT', 'amount * (1 + tax_rate)', 'USD', 'CUSTOMER');

@@ -1,0 +1,44 @@
+-- =========================
+-- Tabla para plantillas de asientos contables
+-- =========================
+CREATE TABLE journal_template (
+    template_id bigserial PRIMARY KEY,
+    entity_id bigint NOT NULL REFERENCES accounting_entity(entity_id),
+    code text NOT NULL,  -- e.g., 'SALE', 'PURCHASE', 'RETURN'
+    name text NOT NULL,  -- e.g., 'Venta de Servicios', 'Compra de Bienes'
+    description text,    -- Detalle de uso
+    is_active boolean NOT NULL DEFAULT true,
+    UNIQUE(entity_id, code),
+    created_at timestamp with time zone NOT NULL DEFAULT current_timestamp,
+    updated_at timestamp with time zone
+);
+
+-- Líneas de la plantilla (detalle de débitos/créditos)
+CREATE TABLE journal_template_line (
+    line_id bigserial PRIMARY KEY,
+    template_id bigint NOT NULL REFERENCES journal_template(template_id),
+    account_id bigint REFERENCES account(account_id),  -- Cuenta específica, si aplica
+    account_category account_category,                -- O categoría para selección dinámica
+    normal_side normal_balance NOT NULL,             -- DEBIT o CREDIT
+    amount_expression text NOT NULL,                 -- e.g., 'amount', 'amount * tax_rate', 'amount * (1 + tax_rate)'
+    currency_code char(3) REFERENCES currency(currency_code), -- Moneda, si fija
+    cost_center_id bigint REFERENCES cost_center,     -- Opcional
+    project_id bigint REFERENCES project,             -- Opcional
+    partner_type text,                               -- e.g., 'CUSTOMER', 'VENDOR' para filtrar partner
+    CHECK (account_id IS NOT NULL OR account_category IS NOT NULL), -- Requiere cuenta o categoría
+    CHECK (amount_expression <> '')
+);
+
+-- Trigger para actualizar updated_at
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = current_timestamp;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_journal_template_timestamp
+    BEFORE UPDATE ON journal_template
+    FOR EACH ROW
+    EXECUTE FUNCTION update_timestamp();
