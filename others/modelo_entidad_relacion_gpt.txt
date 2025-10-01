@@ -1,0 +1,196 @@
+-- 1) Catálogos base
+CREATE TABLE empresa (
+  id              bigserial PRIMARY KEY,
+  nombre          text NOT NULL,
+  moneda_funcional text NOT NULL, -- ISO code; también existe en MONEDA
+  creado_en       timestamptz DEFAULT now(),
+  actualizado_en  timestamptz DEFAULT now()
+);
+
+CREATE TABLE sucursal (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo          text NOT NULL,
+  nombre          text NOT NULL,
+  UNIQUE (empresa_id, codigo)
+);
+
+CREATE TABLE moneda (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo_iso      varchar(3) NOT NULL, -- p.ej., USD, EUR
+  nombre          text NOT NULL,
+  es_funcional    boolean NOT NULL DEFAULT false,
+  UNIQUE (empresa_id, codigo_iso)
+);
+
+CREATE TABLE tipo_cambio (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  moneda_desde_id bigint NOT NULL REFERENCES moneda(id),
+  moneda_hacia_id bigint NOT NULL REFERENCES moneda(id),
+  fecha           date NOT NULL,
+  tasa            numeric(18,8) NOT NULL CHECK (tasa > 0),
+  UNIQUE (empresa_id, moneda_desde_id, moneda_hacia_id, fecha)
+);
+
+CREATE TABLE periodo (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  anio            int NOT NULL,
+  mes             int NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  fecha_inicio    date NOT NULL,
+  fecha_fin       date NOT NULL,
+  estado          text NOT NULL CHECK (estado IN ('ABIERTO','CERRADO')),
+  UNIQUE (empresa_id, anio, mes),
+  CHECK (fecha_fin >= fecha_inicio)
+);
+
+-- 2) Plan de cuentas (jerárquico)
+CREATE TABLE cuenta (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo          text NOT NULL,  -- ej: 1.1.01
+  nombre          text NOT NULL,
+  tipo            text NOT NULL CHECK (tipo IN ('ACTIVO','PASIVO','PATRIMONIO','INGRESO','GASTO')),
+  nivel           int NOT NULL DEFAULT 1,
+  padre_id        bigint REFERENCES cuenta(id),
+  es_movil        boolean NOT NULL DEFAULT true,  -- puede recibir apuntes
+  UNIQUE (empresa_id, codigo)
+);
+
+-- 3) Otros catálogos
+CREATE TABLE centro_costo (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo          text NOT NULL,
+  nombre          text NOT NULL,
+  activo          boolean NOT NULL DEFAULT true,
+  UNIQUE (empresa_id, codigo)
+);
+
+CREATE TABLE tercero (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  tipo            text NOT NULL CHECK (tipo IN ('CLIENTE','PROVEEDOR','OTRO')),
+  identificacion  text,
+  nombre          text NOT NULL,
+  UNIQUE (empresa_id, tipo, identificacion)
+);
+
+CREATE TABLE impuesto (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo          text NOT NULL,
+  nombre          text NOT NULL,
+  porcentaje      numeric(9,6) NOT NULL CHECK (porcentaje >= 0),
+  es_porcentaje   boolean NOT NULL DEFAULT true,
+  UNIQUE (empresa_id, codigo)
+);
+
+CREATE TABLE tipo_documento (
+  id              bigserial PRIMARY KEY,
+  empresa_id      bigint NOT NULL REFERENCES empresa(id),
+  codigo          text NOT NULL,  -- FAC, NC, ND, REC, etc.
+  descripcion     text NOT NULL,
+  UNIQUE (empresa_id, codigo)
+);
+
+-- 4) Asientos y líneas
+CREATE TABLE asiento (
+  id                  bigserial PRIMARY KEY,
+  empresa_id          bigint NOT NULL REFERENCES empresa(id),
+  sucursal_id         bigint NOT NULL REFERENCES sucursal(id),
+  periodo_id          bigint NOT NULL REFERENCES periodo(id),
+  fecha               date NOT NULL,
+  tipo_comprobante    text NOT NULL,   -- DIARIO, INGRESO, EGRESO, etc. (o FK)
+  numero              bigint NOT NULL, -- correlativo por sucursal+periodo+tipo
+  descripcion         text,
+  moneda_id           bigint NOT NULL REFERENCES moneda(id), -- moneda del asiento
+  tasa_a_funcional    numeric(18,8) NOT NULL DEFAULT 1,      -- factor a moneda funcional
+  estado              text NOT NULL DEFAULT 'POSTEADO' CHECK (estado IN ('BORRADOR','POSTEADO','ANULADO')),
+  creado_por          text,
+  creado_en           timestamptz DEFAULT now(),
+  actualizado_en      timestamptz DEFAULT now(),
+  UNIQUE (empresa_id, sucursal_id, periodo_id, tipo_comprobante, numero)
+);
+
+CREATE TABLE asiento_linea (
+  id                  bigserial PRIMARY KEY,
+  asiento_id          bigint NOT NULL REFERENCES asiento(id) ON DELETE CASCADE,
+  cuenta_id           bigint NOT NULL REFERENCES cuenta(id),
+  descripcion         text,
+  tercero_id          bigint REFERENCES tercero(id),
+  centro_costo_id     bigint REFERENCES centro_costo(id),
+  moneda_id           bigint NOT NULL REFERENCES moneda(id),      -- puede coincidir o no con la del asiento
+  monto_moneda        numeric(18,4) NOT NULL CHECK (monto_moneda >= 0),
+  monto_funcional     numeric(18,4) NOT NULL CHECK (monto_funcional >= 0),
+  debe                numeric(18,4) NOT NULL DEFAULT 0 CHECK (debe >= 0),
+  haber               numeric(18,4) NOT NULL DEFAULT 0 CHECK (haber >= 0),
+  CHECK ( (debe = 0 AND haber > 0) OR (haber = 0 AND debe > 0) )
+);
+
+CREATE TABLE asiento_linea_impuesto (
+  id                  bigserial PRIMARY KEY,
+  asiento_linea_id    bigint NOT NULL REFERENCES asiento_linea(id) ON DELETE CASCADE,
+  impuesto_id         bigint NOT NULL REFERENCES impuesto(id),
+  base_funcional      numeric(18,4) NOT NULL CHECK (base_funcional >= 0),
+  valor_funcional     numeric(18,4) NOT NULL CHECK (valor_funcional >= 0),
+  UNIQUE (asiento_linea_id, impuesto_id)
+);
+
+CREATE TABLE documento (
+  id                  bigserial PRIMARY KEY,
+  asiento_id          bigint NOT NULL REFERENCES asiento(id) ON DELETE CASCADE,
+  tipo_documento_id   bigint NOT NULL REFERENCES tipo_documento(id),
+  serie               text,
+  numero              text,
+  fecha_emision       date,
+  importe_total       numeric(18,4),
+  url_soporte         text,           -- vínculo a archivo digital
+  UNIQUE (tipo_documento_id, serie, numero)
+);
+
+-- 5) Índices útiles
+CREATE INDEX idx_asiento_fecha ON asiento(empresa_id, fecha);
+CREATE INDEX idx_linea_cuenta ON asiento_linea(cuenta_id);
+CREATE INDEX idx_linea_tercero ON asiento_linea(tercero_id);
+CREATE INDEX idx_linea_ccosto ON asiento_linea(centro_costo_id);
+
+-- 6) Reglas de negocio mediante triggers (PostgreSQL)
+-- 6.1 Validar que fecha del asiento caiga en el periodo y que esté ABIERTO
+CREATE OR REPLACE FUNCTION fn_valida_asiento_periodo() RETURNS trigger AS $$
+DECLARE p_estado text; p_ini date; p_fin date;
+BEGIN
+  SELECT estado, fecha_inicio, fecha_fin INTO p_estado, p_ini, p_fin
+  FROM periodo WHERE id = NEW.periodo_id;
+  IF NEW.fecha < p_ini OR NEW.fecha > p_fin THEN
+     RAISE EXCEPTION 'Fecha % fuera del periodo [% - %]', NEW.fecha, p_ini, p_fin;
+  END IF;
+  IF p_estado <> 'ABIERTO' THEN
+     RAISE EXCEPTION 'Periodo %-% no está ABIERTO', p_ini, p_fin;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_asiento_periodo
+BEFORE INSERT OR UPDATE ON asiento
+FOR EACH ROW EXECUTE FUNCTION fn_valida_asiento_periodo();
+
+-- 6.2 Enforce partida doble: suma(debe) = suma(haber) al postear
+CREATE OR REPLACE FUNCTION fn_valida_partida_doble() RETURNS trigger AS $$
+DECLARE s_debe numeric(18,4); s_haber numeric(18,4);
+BEGIN
+  SELECT COALESCE(SUM(debe),0), COALESCE(SUM(haber),0)
+    INTO s_debe, s_haber
+  FROM asiento_linea WHERE asiento_id = NEW.id;
+  IF NEW.estado = 'POSTEADO' AND s_debe <> s_haber THEN
+    RAISE EXCEPTION 'Asiento % descuadrado: Debe=%, Haber=%', NEW.id, s_debe, s_haber;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_asiento_posteado
+AFTER INSERT OR UPDATE ON asiento
+FOR EACH ROW EXECUTE FUNCTION fn_valida_partida_doble();
+
