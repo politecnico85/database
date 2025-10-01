@@ -1,0 +1,360 @@
+-- Crear tabla Líneas
+CREATE TABLE Lineas (
+    id_linea INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_linea VARCHAR(100) NOT NULL,
+    descripcion TEXT
+);
+
+-- Crear tabla Categorías
+CREATE TABLE Categorias (
+    id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_categoria VARCHAR(100) NOT NULL,
+    descripcion TEXT
+);
+
+-- Crear tabla Sucursales
+CREATE TABLE Sucursales (
+    id_sucursal INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_sucursal VARCHAR(100) NOT NULL,
+    direccion VARCHAR(200),
+    telefono VARCHAR(20),
+    ruc_sucursal VARCHAR(13)
+);
+
+-- Crear tabla Bodegas
+CREATE TABLE Bodegas (
+    id_bodega INT AUTO_INCREMENT PRIMARY KEY,
+    id_sucursal INT NOT NULL,
+    nombre_bodega VARCHAR(100) NOT NULL,
+    direccion VARCHAR(200),
+    capacidad_maxima INT,
+    FOREIGN KEY (id_sucursal) REFERENCES Sucursales(id_sucursal) ON DELETE CASCADE
+);
+
+-- Crear tabla Productos
+CREATE TABLE Productos (
+    id_producto INT AUTO_INCREMENT PRIMARY KEY,
+    id_linea INT NOT NULL,
+    id_categoria INT NOT NULL,
+    nombre_producto VARCHAR(100) NOT NULL,
+    descripcion TEXT,
+    precio_base DECIMAL(10,2) NOT NULL,
+    codigo_barras VARCHAR(50),
+    marca VARCHAR(50),
+    FOREIGN KEY (id_linea) REFERENCES Lineas(id_linea) ON DELETE RESTRICT,
+    FOREIGN KEY (id_categoria) REFERENCES Categorias(id_categoria) ON DELETE RESTRICT
+);
+
+-- Crear tabla Inventario
+CREATE TABLE Inventario (
+    id_inventario INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_bodega INT NOT NULL,
+    cantidad_stock INT NOT NULL DEFAULT 0,
+    cantidad_minima INT DEFAULT 0,
+    fecha_actualizacion DATE,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_bodega) REFERENCES Bodegas(id_bodega) ON DELETE CASCADE
+);
+
+-- Crear tabla Precios
+CREATE TABLE Precios (
+    id_precio INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_sucursal INT,
+    precio DECIMAL(10,2) NOT NULL,
+    tipo_lista_precio VARCHAR(50),
+    fecha_inicio DATE,
+    fecha_fin DATE,
+    segmento_cliente VARCHAR(50),
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_sucursal) REFERENCES Sucursales(id_sucursal) ON DELETE SET NULL
+);
+
+-- Crear tabla TiposDescuento
+CREATE TABLE TiposDescuento (
+    id_tipo_descuento INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_tipo VARCHAR(50) NOT NULL,
+    descripcion_tipo TEXT
+);
+
+-- Crear tabla Descuentos
+CREATE TABLE Descuentos (
+    id_descuento INT AUTO_INCREMENT PRIMARY KEY,
+    id_tipo_descuento INT NOT NULL,
+    valor DECIMAL(10,2) NOT NULL,
+    cantidad_minima INT,
+    cliente_aplicable VARCHAR(50),
+    id_sucursal INT,
+    fecha_inicio_descuento DATE,
+    fecha_fin_descuento DATE,
+    FOREIGN KEY (id_tipo_descuento) REFERENCES TiposDescuento(id_tipo_descuento) ON DELETE RESTRICT,
+    FOREIGN KEY (id_sucursal) REFERENCES Sucursales(id_sucursal) ON DELETE SET NULL
+);
+
+-- Crear tabla DescuentoProducto (Intermedia)
+CREATE TABLE DescuentoProducto (
+    id_descuento INT NOT NULL,
+    id_producto INT NOT NULL,
+    PRIMARY KEY (id_descuento, id_producto),
+    FOREIGN KEY (id_descuento) REFERENCES Descuentos(id_descuento) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE CASCADE
+);
+
+-- Crear tabla Factura
+CREATE TABLE Factura (
+    id_factura INT AUTO_INCREMENT PRIMARY KEY,
+    id_sucursal INT NOT NULL,
+    id_bodega INT,
+    ruc_emisor VARCHAR(13) NOT NULL,
+    denominacion_documento VARCHAR(50) NOT NULL,
+    numeracion VARCHAR(15) NOT NULL,
+    numero_autorizacion VARCHAR(10) NOT NULL,
+    fecha_autorizacion DATE NOT NULL,
+    identificacion_adquiriente VARCHAR(13) NOT NULL,
+    nombre_comercial VARCHAR(100),
+    razon_social_emisor VARCHAR(100) NOT NULL,
+    direccion_matriz VARCHAR(200) NOT NULL,
+    direccion_establecimiento VARCHAR(200),
+    fecha_emision DATE NOT NULL,
+    fecha_caducidad DATE,
+    forma_pago VARCHAR(50) NOT NULL,
+    valor_forma_pago DECIMAL(10,2) NOT NULL,
+    numero_guia_remision VARCHAR(15),
+    FOREIGN KEY (id_sucursal) REFERENCES Sucursales(id_sucursal) ON DELETE RESTRICT,
+    FOREIGN KEY (id_bodega) REFERENCES Bodegas(id_bodega) ON DELETE SET NULL
+);
+
+-- Crear tabla Línea de Factura
+CREATE TABLE LineaFactura (
+    id_linea_factura INT AUTO_INCREMENT PRIMARY KEY,
+    id_factura INT NOT NULL,
+    id_producto INT NOT NULL,
+    id_inventario INT,
+    descripcion TEXT NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL,
+    valor_total DECIMAL(10,2) NOT NULL,
+    id_descuento INT,
+    FOREIGN KEY (id_factura) REFERENCES Factura(id_factura) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT,
+    FOREIGN KEY (id_inventario) REFERENCES Inventario(id_inventario) ON DELETE SET NULL,
+    FOREIGN KEY (id_descuento) REFERENCES Descuentos(id_descuento) ON DELETE SET NULL
+);
+
+-- Crear tabla Totales Factura
+CREATE TABLE TotalesFactura (
+    id_factura INT PRIMARY KEY,
+    base_imponible_12 DECIMAL(10,2) DEFAULT 0,
+    base_imponible_0 DECIMAL(10,2) DEFAULT 0,
+    descuento_comercial DECIMAL(10,2) DEFAULT 0,
+    valor_subtotal DECIMAL(10,2) NOT NULL,
+    valor_iva DECIMAL(10,2) DEFAULT 0,
+    valor_ice DECIMAL(10,2) DEFAULT 0,
+    valor_total DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_factura) REFERENCES Factura(id_factura) ON DELETE CASCADE
+);
+
+-- Crear tabla Nota de Crédito
+CREATE TABLE NotaCredito (
+    id_nota_credito INT AUTO_INCREMENT PRIMARY KEY,
+    id_sucursal INT NOT NULL,
+    ruc_emisor VARCHAR(13) NOT NULL,
+    denominacion_documento VARCHAR(50) NOT NULL,
+    numeracion VARCHAR(15) NOT NULL,
+    numero_autorizacion VARCHAR(10) NOT NULL,
+    fecha_autorizacion DATE NOT NULL,
+    fecha_emision DATE NOT NULL,
+    fecha_caducidad DATE,
+    id_factura_modificada INT NOT NULL,
+    identificacion_adquiriente VARCHAR(13) NOT NULL,
+    nombre_comercial VARCHAR(100),
+    razon_social_emisor VARCHAR(100) NOT NULL,
+    direccion_matriz VARCHAR(200) NOT NULL,
+    direccion_establecimiento VARCHAR(200),
+    motivo_modificacion TEXT NOT NULL,
+    FOREIGN KEY (id_sucursal) REFERENCES Sucursales(id_sucursal) ON DELETE RESTRICT,
+    FOREIGN KEY (id_factura_modificada) REFERENCES Factura(id_factura) ON DELETE CASCADE
+);
+
+-- Crear tabla Línea de Nota de Crédito
+CREATE TABLE LineaNotaCredito (
+    id_linea_nota_credito INT AUTO_INCREMENT PRIMARY KEY,
+    id_nota_credito INT NOT NULL,
+    id_producto INT NOT NULL,
+    cantidad INT NOT NULL,
+    descripcion TEXT NOT NULL,
+    valor_item_cobrado DECIMAL(10,2) NOT NULL,
+    valor_total DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_nota_credito) REFERENCES NotaCredito(id_nota_credito) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT
+);
+
+-- Crear tabla Totales Nota de Crédito
+CREATE TABLE TotalesNotaCredito (
+    id_nota_credito INT PRIMARY KEY,
+    base_imponible_12 DECIMAL(10,2) DEFAULT 0,
+    base_imponible_0 DECIMAL(10,2) DEFAULT 0,
+    base_imponible_exenta_iva DECIMAL(10,2) DEFAULT 0,
+    base_imponible_no_objeto_iva DECIMAL(10,2) DEFAULT 0,
+    descuento_comercial DECIMAL(10,2) DEFAULT 0,
+    valor_subtotal DECIMAL(10,2) NOT NULL,
+    valor_iva DECIMAL(10,2) DEFAULT 0,
+    valor_ice DECIMAL(10,2) DEFAULT 0,
+    valor_total DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_nota_credito) REFERENCES NotaCredito(id_nota_credito) ON DELETE CASCADE
+);
+
+CREATE TABLE MovimientosInventario (
+    id_movimiento INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_bodega INT NOT NULL,
+    id_factura INT,
+    id_orden_compra INT,
+    tipo_movimiento ENUM('ENTRADA', 'SALIDA') NOT NULL,
+    cantidad INT NOT NULL,
+    fecha_movimiento DATETIME NOT NULL,
+    stock_post_movimiento INT NOT NULL,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT,
+    FOREIGN KEY (id_b ODEga) REFERENCES Bodegas(id_bodega) ON DELETE RESTRICT,
+    FOREIGN KEY (id_factura) REFERENCES Factura(id_factura) ON DELETE SET NULL,
+    FOREIGN KEY (id_orden_compra) REFERENCES OrdenesCompra(id_orden_compra) ON DELETE SET NULL
+);
+
+CREATE TABLE OrdenesCompra (
+    id_orden_compra INT AUTO_INCREMENT PRIMARY KEY,
+    numero_orden VARCHAR(50) NOT NULL,
+    fecha_compra DATE NOT NULL,
+    proveedor VARCHAR(100)
+);
+
+SELECT 
+    m.id_movimiento,
+    m.fecha_movimiento,
+    p.nombre_producto,
+    l.nombre_linea,
+    c.nombre_categoria,
+    b.nombre_bodega,
+    s.nombre_sucursal,
+    m.tipo_movimiento,
+    m.cantidad,
+    m.stock_post_movimiento,
+    COALESCE(f.numeracion, 'N/A') AS numero_factura,
+    COALESCE(oc.numero_orden, 'N/A') AS numero_orden_compra
+FROM 
+    MovimientosInventario m
+    JOIN Productos p ON m.id_producto = p.id_producto
+    JOIN Lineas l ON p.id_linea = l.id_linea
+    JOIN Categorias c ON p.id_categoria = c.id_categoria
+    JOIN Bodegas b ON m.id_bodega = b.id_bodega
+    JOIN Sucursales s ON b.id_sucursal = s.id_sucursal
+    LEFT JOIN Factura f ON m.id_factura = f.id_factura
+    LEFT JOIN OrdenesCompra oc ON m.id_orden_compra = oc.id_orden_compra
+ORDER BY 
+    m.fecha_movimiento ASC, p.nombre_producto, b.nombre_bodega;
+
+
+DELIMITER //
+CREATE TRIGGER after_movimiento_insert
+AFTER INSERT ON MovimientosInventario
+FOR EACH ROW
+BEGIN
+    DECLARE nuevo_stock INT;
+
+    -- Calcular el nuevo stock en la tabla Inventario
+    IF NEW.tipo_movimiento = 'ENTRADA' THEN
+        SET nuevo_stock = (
+            SELECT cantidad_stock 
+            FROM Inventario 
+            WHERE id_producto = NEW.id_producto AND id_bodega = NEW.id_bodega
+        ) + NEW.cantidad;
+    ELSE
+        SET nuevo_stock = (
+            SELECT cantidad_stock 
+            FROM Inventario 
+            WHERE id_producto = NEW.id_producto AND id_bodega = NEW.id_bodega
+        ) - NEW.cantidad;
+    END IF;
+
+    -- Actualizar stock en la tabla Inventario
+    UPDATE Inventario 
+    SET cantidad_stock = nuevo_stock,
+        fecha_actualizacion = CURDATE()
+    WHERE id_producto = NEW.id_producto AND id_bodega = NEW.id_bodega;
+
+    -- Actualizar stock_post_movimiento en el movimiento recién insertado
+    UPDATE MovimientosInventario 
+    SET stock_post_movimiento = nuevo_stock
+    WHERE id_movimiento = NEW.id_movimiento;
+END //
+DELIMITER ;
+
+CREATE TABLE Lotes (
+    id_lote INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_bodega INT NOT NULL,
+    id_orden_compra INT,
+    fecha_compra DATE NOT NULL,
+    cantidad_inicial INT NOT NULL,
+    cantidad_restante INT NOT NULL,
+    costo_unitario DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT,
+    FOREIGN KEY (id_bodega) REFERENCES Bodegas(id_bodega) ON DELETE RESTRICT,
+    FOREIGN KEY (id_orden_compra) REFERENCES OrdenesCompra(id_orden_compra) ON DELETE SET NULL
+);
+
+ALTER TABLE MovimientosInventario
+ADD COLUMN id_lote INT,
+ADD COLUMN costo_unitario_aplicado DECIMAL(10,2),
+ADD FOREIGN KEY (id_lote) REFERENCES Lotes(id_lote) ON DELETE SET NULL;
+
+DELIMITER //
+CREATE PROCEDURE RegistrarSalidaFIFO (
+    IN p_id_producto INT,
+    IN p_id_bodega INT,
+    IN p_cantidad INT,
+    IN p_id_factura INT
+)
+BEGIN
+    DECLARE v_id_lote INT;
+    DECLARE v_costo_unitario DECIMAL(10,2);
+    DECLARE v_cantidad_restante INT;
+    DECLARE v_cantidad_pendiente INT DEFAULT p_cantidad;
+
+    WHILE v_cantidad_pendiente > 0 DO
+        -- Encontrar el lote más antiguo con stock
+        SELECT id_lote, costo_unitario, cantidad_restante
+        INTO v_id_lote, v_costo_unitario, v_cantidad_restante
+        FROM Lotes
+        WHERE id_producto = p_id_producto AND id_bodega = p_id_bodega AND cantidad_restante > 0
+        ORDER BY fecha_compra ASC
+        LIMIT 1;
+
+        IF v_id_lote IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente en FIFO';
+        END IF;
+
+        -- Calcular cantidad a despachar de este lote
+        SET @despacho = LEAST(v_cantidad_restante, v_cantidad_pendiente);
+
+        -- Actualizar lote
+        UPDATE Lotes SET cantidad_restante = cantidad_restante - @despacho WHERE id_lote = v_id_lote;
+
+        -- Registrar movimiento
+        INSERT INTO MovimientosInventario (id_producto, id_bodega, id_factura, tipo_movimiento, cantidad, fecha_movimiento, id_lote, costo_unitario_aplicado, stock_post_movimiento)
+        VALUES (p_id_producto, p_id_bodega, p_id_factura, 'SALIDA', @despacho, NOW(), v_id_lote, v_costo_unitario, (SELECT cantidad_stock FROM Inventario WHERE id_producto = p_id_producto AND id_bodega = p_id_bodega) - @despacho);
+
+        -- Actualizar stock total
+        UPDATE Inventario SET cantidad_stock = cantidad_stock - @despacho WHERE id_producto = p_id_producto AND id_bodega = p_id_bodega;
+
+        SET v_cantidad_pendiente = v_cantidad_pendiente - @despacho;
+    END WHILE;
+END //
+DELIMITER ;
+
+SELECT p.nombre_producto, SUM(l.cantidad_restante * l.costo_unitario) AS valor_inventario_fifo
+FROM Lotes l
+JOIN Productos p ON l.id_producto = p.id_producto
+WHERE l.cantidad_restante > 0
+GROUP BY p.id_producto;
+
