@@ -211,7 +211,9 @@ CREATE TABLE MovimientosInventario (
     id_bodega INT NOT NULL,
     id_factura INT,
     id_orden_compra INT,
+    id_lote INT,
     tipo_movimiento ENUM('ENTRADA', 'SALIDA') NOT NULL,
+    costo_unitario_aplicado DECIMAL(10,2),
     cantidad INT NOT NULL,
     fecha_movimiento DATETIME NOT NULL,
     stock_post_movimiento INT NOT NULL,
@@ -219,7 +221,25 @@ CREATE TABLE MovimientosInventario (
     FOREIGN KEY (id_b ODEga) REFERENCES Bodegas(id_bodega) ON DELETE RESTRICT,
     FOREIGN KEY (id_factura) REFERENCES Factura(id_factura) ON DELETE SET NULL,
     FOREIGN KEY (id_orden_compra) REFERENCES OrdenesCompra(id_orden_compra) ON DELETE SET NULL
+    FOREIGN KEY (id_lote) REFERENCES Lotes(id_lote) ON DELETE SET NULL;
+
 );
+
+CREATE TABLE Lotes (
+    id_lote INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_bodega INT NOT NULL,
+    id_orden_compra INT,
+    fecha_compra DATE NOT NULL,
+    cantidad_inicial INT NOT NULL,
+    cantidad_restante INT NOT NULL,
+    costo_unitario DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT,
+    FOREIGN KEY (id_bodega) REFERENCES Bodegas(id_bodega) ON DELETE RESTRICT,
+    FOREIGN KEY (id_orden_compra) REFERENCES OrdenesCompra(id_orden_compra) ON DELETE SET NULL
+);
+
+
 
 CREATE TABLE OrdenesCompra (
     id_orden_compra INT AUTO_INCREMENT PRIMARY KEY,
@@ -289,24 +309,7 @@ BEGIN
 END //
 DELIMITER ;
 
-CREATE TABLE Lotes (
-    id_lote INT AUTO_INCREMENT PRIMARY KEY,
-    id_producto INT NOT NULL,
-    id_bodega INT NOT NULL,
-    id_orden_compra INT,
-    fecha_compra DATE NOT NULL,
-    cantidad_inicial INT NOT NULL,
-    cantidad_restante INT NOT NULL,
-    costo_unitario DECIMAL(10,2) NOT NULL,
-    FOREIGN KEY (id_producto) REFERENCES Productos(id_producto) ON DELETE RESTRICT,
-    FOREIGN KEY (id_bodega) REFERENCES Bodegas(id_bodega) ON DELETE RESTRICT,
-    FOREIGN KEY (id_orden_compra) REFERENCES OrdenesCompra(id_orden_compra) ON DELETE SET NULL
-);
 
-ALTER TABLE MovimientosInventario
-ADD COLUMN id_lote INT,
-ADD COLUMN costo_unitario_aplicado DECIMAL(10,2),
-ADD FOREIGN KEY (id_lote) REFERENCES Lotes(id_lote) ON DELETE SET NULL;
 
 DELIMITER //
 CREATE PROCEDURE RegistrarSalidaFIFO (
