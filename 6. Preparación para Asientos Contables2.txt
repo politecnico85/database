@@ -1,0 +1,19 @@
+
+CREATE TABLE journal_entry (
+  entry_id bigserial PRIMARY KEY,
+  entity_id bigint REFERENCES accounting_entity(entity_id),
+  period_id bigint REFERENCES fiscal_period(period_id),
+  entry_date date NOT NULL,
+  description text,
+  is_posted boolean DEFAULT false
+);
+
+CREATE TABLE journal_line (
+  line_id bigserial PRIMARY KEY,
+  entry_id bigint REFERENCES journal_entry(entry_id),
+  account_id bigint REFERENCES account(account_id),
+  amount numeric NOT NULL,
+  side normal_balance NOT NULL, -- 'DEBIT' o 'CREDIT'
+  cost_center_id bigint REFERENCES cost_center(cost_center_id),
+  project_id bigint REFERENCES project(project_id)
+);
